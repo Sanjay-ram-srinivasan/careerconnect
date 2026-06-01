@@ -15,6 +15,12 @@ services:
           name: careerconnect-db
           property: connectionString
 
+      - key: FLASK_ENV
+        value: production
+
+      - key: RENDER
+        value: "true"
+
       - key: MAIL_SERVER
         value: sandbox.smtp.mailtrap.io
 

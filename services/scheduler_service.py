@@ -13,19 +13,23 @@ def run_job_sync(app):
     with app.app_context():
         try:
             from services.job_api import JobSyncService
-            logger.info("Background Job Sync running...")
-            JobSyncService.sync()
+            logger.info("[SCHEDULER] Background Job Sync triggered...")
+            result = JobSyncService.sync()
+            logger.info("[SCHEDULER] Background Job Sync finished: %s", result)
         except Exception as e:
-            logger.error(f"Error in background Job Sync: {e}")
+            # Use logger.exception() to capture the FULL traceback in logs, not just the message
+            logger.exception("[SCHEDULER] Error in background Job Sync: %s", e)
 
 def run_internship_sync(app):
     with app.app_context():
         try:
             from services.job_api import InternshipSyncService
-            logger.info("Background Internship Sync running...")
-            InternshipSyncService.sync()
+            logger.info("[SCHEDULER] Background Internship Sync triggered...")
+            result = InternshipSyncService.sync()
+            logger.info("[SCHEDULER] Background Internship Sync finished: %s", result)
         except Exception as e:
-            logger.error(f"Error in background Internship Sync: {e}")
+            # Use logger.exception() to capture the FULL traceback in logs, not just the message
+            logger.exception("[SCHEDULER] Error in background Internship Sync: %s", e)
 
 def init_scheduler(app):
     """
@@ -33,8 +37,13 @@ def init_scheduler(app):
     Uses a cross-platform lock file to ensure that only ONE Gunicorn worker
     process starts the scheduler, avoiding duplicate cron tasks.
     """
-    # In development/single-process mode, we don't need locks
-    is_gunicorn = "gunicorn" in os.environ.get("SERVER_SOFTWARE", "") or os.environ.get("FLASK_ENV") == "production"
+    # Detect Gunicorn / production environment.
+    # Render does not set SERVER_SOFTWARE, so also check FLASK_ENV and RENDER env vars.
+    is_gunicorn = (
+        "gunicorn" in os.environ.get("SERVER_SOFTWARE", "")
+        or os.environ.get("FLASK_ENV") == "production"
+        or os.environ.get("RENDER") == "true"
+    )
     
     if is_gunicorn:
         # Check lock file
@@ -82,7 +91,8 @@ def init_scheduler(app):
     )
     
     scheduler.start()
-    logger.info(f"Scheduler successfully started in background process (PID: {os.getpid()}).")
+    logger.info("[SCHEDULER] Scheduler successfully started in background process (PID: %s).", os.getpid())
+    logger.info("[SCHEDULER] Jobs scheduled: job_sync (hourly), internship_sync (every 2 hours).")
     return scheduler
 
 def cleanup_lock():

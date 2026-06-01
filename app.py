@@ -50,14 +50,25 @@ def _configure_database(app):
         from urllib.parse import urlparse
         try:
             res = urlparse(raw_url)
-            if res.hostname and not any(h in res.hostname for h in ('localhost', '127.0.0.1', 'postgres')):
+            # FIX: Only treat 'localhost' and '127.0.0.1' as local.
+            # Do NOT check for the substring 'postgres' — Render's managed PostgreSQL
+            # hostnames look like 'dpg-xxx.oregon-postgres.render.com', which contains
+            # 'postgres' as a substring and would have incorrectly been treated as local.
+            if res.hostname and res.hostname not in ('localhost', '127.0.0.1'):
                 is_local = False
         except Exception:
             pass
 
     # 1. If it's a remote PostgreSQL (production / Render), use it directly
     if raw_url and not is_local:
-        logger.info("Database: using production/remote DATABASE_URL from environment.")
+        # Mask credentials in the log so we can confirm the correct host without leaking secrets
+        try:
+            from urllib.parse import urlparse, urlunparse
+            _p = urlparse(raw_url)
+            _masked = urlunparse(_p._replace(netloc=f"****:****@{_p.hostname}:{_p.port or 5432}"))
+        except Exception:
+            _masked = "<unparseable>"
+        logger.info("Database: using production/remote DATABASE_URL → %s", _masked)
         db_url = raw_url
     else:
         # 2. It's a local database — test the connection to verify PostgreSQL is running
@@ -217,12 +228,26 @@ with app.app_context():
     try:
         # Create tables that don't exist yet (safe no-op for existing tables)
         db.create_all()
+        logger.info("Database tables verified/created via db.create_all().")
 
         # Confirm connectivity
         if not _verify_db_connection():
             logger.warning(
                 "Database unreachable at startup — application may not function correctly."
             )
+
+        # ── Immediate startup sync ────────────────────────────────────────────
+        # Run one sync right away so the DB is populated immediately on first
+        # deploy, rather than waiting up to 59 minutes for the first cron tick.
+        try:
+            from services.job_api import JobSyncService, InternshipSyncService
+            logger.info("STARTUP: Running initial JobSyncService.sync()...")
+            JobSyncService.sync()
+            logger.info("STARTUP: Running initial InternshipSyncService.sync()...")
+            InternshipSyncService.sync()
+            logger.info("STARTUP: Initial sync complete.")
+        except Exception as sync_exc:
+            logger.exception("STARTUP: Initial sync failed (non-fatal) — %s", sync_exc)
 
         # Start background sync scheduler
         from services.scheduler_service import init_scheduler
@@ -231,7 +256,7 @@ with app.app_context():
         logger.info("Application startup complete. PostgreSQL backend active.")
 
     except Exception as exc:
-        logger.critical("CRITICAL: Startup failed — %s", exc)
+        logger.critical("CRITICAL: Startup failed — %s", exc, exc_info=True)
 
 # ── Root Route ────────────────────────────────────────────────────────────────
 @app.route('/')
